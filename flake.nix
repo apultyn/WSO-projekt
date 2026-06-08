@@ -70,11 +70,8 @@
           libvirt
           qemu
           nmap
-          nixpkgs-fmt
           nixos-generators.packages.${system}.default
         ];
       };
-
-      formatter.${system} = pkgs.nixpkgs-fmt;
     };
 }

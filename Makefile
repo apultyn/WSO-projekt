@@ -15,7 +15,7 @@ HOST_ARG   := $(filter-out $@,$(MAKECMDGOALS))
 
 .DEFAULT_GOAL := help
 .PHONY: help check test images $(addprefix image-,$(HOSTS)) \
-        up down status console deploy report fmt clean clean-report $(HOSTS)
+        up down status console deploy report clean clean-report $(HOSTS)
 
 ## help: wyświetl tę pomoc
 help:
@@ -74,10 +74,6 @@ deploy:
 ## report: zbuduj raport PDF (report/raport.pdf)
 report:
 	cd report && latexmk -pdf -interaction=nonstopmode -halt-on-error raport.tex
-
-## fmt: sformatuj pliki Nix (nixpkgs-fmt)
-fmt:
-	$(NIXC) fmt
 
 ## clean: usuń artefakty budowania (result*, obrazy, pliki pomocnicze LaTeX)
 clean: clean-report
