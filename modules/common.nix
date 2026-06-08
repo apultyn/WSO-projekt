@@ -43,5 +43,5 @@
   environment.systemPackages = with pkgs; [ vim curl ];
 
   # Pin a state version per the NixOS convention.
-  system.stateVersion = "24.11";
+  system.stateVersion = "26.05";
 }
