@@ -147,12 +147,6 @@ make deploy HOST=www IP=10.10.0.10
 nixos-rebuild switch --flake .#www --target-host root@10.10.0.10
 ```
 
-### Budowa raportu PDF
-
-```sh
-make report          # tworzy report/raport.pdf
-```
-
 ## 5. Plan testów (koncepcja §5)
 
 `tests/integration.nix` koduje obie części planu i dokłada przypadki negatywne,
