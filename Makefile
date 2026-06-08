@@ -7,9 +7,8 @@
 SYSTEM     ?= x86_64-linux
 HOSTS      := gateway www cache db
 IMG_DIR    ?= ./images
-NIX        ?= nix
 NIX_FLAGS  ?= --extra-experimental-features "nix-command flakes"
-NIXC       := $(NIX) $(NIX_FLAGS)
+NIXC       := nix $(NIX_FLAGS)
 
 # Pozwala wywołać np. `make console www` bez ostrzeżeń o nieznanym celu.
 HOST_ARG   := $(filter-out $@,$(MAKECMDGOALS))
