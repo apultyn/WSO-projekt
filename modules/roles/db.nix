@@ -28,7 +28,7 @@
     ensureDatabases = [ "app" ];
     ensureUsers = [
       {
-        name = "appuser";
+        name = "app";
         ensureDBOwnership = true;
       }
     ];
