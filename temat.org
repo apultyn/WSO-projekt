@@ -1,0 +1,17 @@
+#+DESCRIPTION: Ogólny opis tematu pracy
+
+Automatyzacja zarządzania maszynami wirtualnymi:
+- Zestaw skryptów/program ułatwiający zarządzanie VM/klastrem
+- Opracować odpowiedni scenariusz
+- Użycie narzędzi!
+
+Zakres: Zarządzania sieciami dla maszyn wirtualnych
+
+Funkcje:
+- tworzenie/usuwanie sieci i VM
+- filtracja ruchu dla sieci, NAT
+- konfiguracja firewalla VM (można użyć ansible/shorewall…).
+
+Do zrobienia:
+- przeanalizować bezpieczeństwo rozwiązania
+- wskazać bezpieczne i ew. niewłaściwe sposoby użycia
