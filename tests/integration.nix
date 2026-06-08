@@ -72,8 +72,8 @@ pkgs.testers.runNixOSTest {
     # --- nmap: only the published ports are visible from the Internet -------
     with subtest("nmap from the Internet sees only 80/443"):
         scan = client.succeed("nmap -Pn -p 22,80,443,5432,6379 192.0.2.1")
-        assert "80/tcp open" in scan, scan
-        assert "443/tcp open" in scan, scan
+        assert "80/tcp open" in scan, "HTTP port not visible"
+        assert "443/tcp open" in scan, "HTTPS port not visible"
         assert "open" not in scan.replace("80/tcp open", "").replace("443/tcp open", ""), \
             f"unexpected open port from the Internet:\n{scan}"
   '';
