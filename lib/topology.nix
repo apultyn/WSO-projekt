@@ -29,29 +29,11 @@ rec {
   networks = {
     # "Internet".  Uses the RFC 5737 documentation range so it can never clash
     # with a real network and is obviously non-routable in the report.
-    wan = {
-      vlan = 9;
-      cidr = "192.0.2.0/24";
-      prefix = 24;
-    };
-    # gateway <-> www
-    edge = {
-      vlan = 1;
-      cidr = "10.10.0.0/24";
-      prefix = 24;
-    };
-    # www <-> cache
-    app = {
-      vlan = 2;
-      cidr = "10.20.0.0/24";
-      prefix = 24;
-    };
-    # cache <-> db
-    data = {
-      vlan = 3;
-      cidr = "10.30.0.0/24";
-      prefix = 24;
-    };
+    wan  = { vlan = 9; cidr = "192.0.2.0/24"; prefix = 24; };
+
+    edge = { vlan = 1; cidr = "10.10.0.0/24"; prefix = 24; }; # gw <-> www
+    app  = { vlan = 2; cidr = "10.20.0.0/24"; prefix = 24; }; # www <-> cache
+    data = { vlan = 3; cidr = "10.30.0.0/24"; prefix = 24; }; # cache <-> db
   };
 
   # ---------------------------------------------------------------------------
