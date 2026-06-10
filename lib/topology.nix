@@ -22,18 +22,18 @@ rec {
   #
   #   vlan   - VLAN id used by the NixOS test driver to wire nodes together.
   #            Re-used as a stable identifier for libvirt networks as well.
-  #   cidr   - network address in CIDR form.
+  #   ip     - network address.
   #   prefix - prefix length, kept separately because several consumers need it
   #            as an integer.
   # ---------------------------------------------------------------------------
   networks = {
     # "Internet".  Uses the RFC 5737 documentation range so it can never clash
     # with a real network and is obviously non-routable in the report.
-    wan  = { vlan = 9; cidr = "192.0.2.0/24"; prefix = 24; };
+    wan  = { vlan = 9; ip = "192.0.2.0"; prefix = 24; };
 
-    edge = { vlan = 1; cidr = "10.10.0.0/24"; prefix = 24; }; # gw <-> www
-    app  = { vlan = 2; cidr = "10.20.0.0/24"; prefix = 24; }; # www <-> cache
-    data = { vlan = 3; cidr = "10.30.0.0/24"; prefix = 24; }; # cache <-> db
+    edge = { vlan = 1; ip = "10.10.0.0"; prefix = 24; }; # gw <-> www
+    app  = { vlan = 2; ip = "10.20.0.0"; prefix = 24; }; # www <-> cache
+    data = { vlan = 3; ip = "10.30.0.0"; prefix = 24; }; # cache <-> db
   };
 
   # ---------------------------------------------------------------------------
