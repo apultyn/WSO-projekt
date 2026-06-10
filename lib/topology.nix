@@ -37,6 +37,23 @@ rec {
   };
 
   # ---------------------------------------------------------------------------
+  # Named addresses and ports.
+  #
+  # The firewall rulesets reference these instead of hard-coding literals, so
+  # the allow-matrix and the topology can never drift apart.
+  # ---------------------------------------------------------------------------
+  addr = {
+    gateway = "10.10.0.1";    # local gateway IP
+    gatewayWan = "192.0.2.1"; # public IP that DNAT is published on
+    www = "10.10.0.10";       # web server, edge side
+    wwwApp = "10.20.0.1";     # web server, app side (source of redis traffic)
+    cache = "10.20.0.10";     # redis, app side
+    cacheData = "10.30.0.1";  # redis, data side (source of postgres traffic)
+    db = "10.30.0.10";        # postgres, data side
+    client = "192.0.2.10";
+  };
+
+  # ---------------------------------------------------------------------------
   # Hosts.
   #
   # `nets` is an *ordered* list.  The order defines which physical interface a
@@ -54,27 +71,27 @@ rec {
     gateway = {
       role = "gateway";
       nets = [
-        { net = "wan"; address = "192.0.2.1"; }
-        { net = "edge"; address = "10.10.0.1"; }
+        { net = "wan"; address = addr.gatewayWan; }
+        { net = "edge"; address = addr.gateway; }
       ];
     };
 
     www = {
       role = "www";
       nets = [
-        { net = "edge"; address = "10.10.0.10"; }
-        { net = "app"; address = "10.20.0.1"; }
+        { net = "edge"; address = addr.www; }
+        { net = "app"; address = addr.wwwApp; }
       ];
       # Replies to external clients and (optional) package updates leave through
       # the gateway.
-      defaultGateway = "10.10.0.1";
+      defaultGateway = addr.gateway;
     };
 
     cache = {
       role = "cache";
       nets = [
-        { net = "app"; address = "10.20.0.10"; }
-        { net = "data"; address = "10.30.0.1"; }
+        { net = "app"; address = addr.cache; }
+        { net = "data"; address = addr.cacheData; }
       ];
       # No default route on purpose: the cache tier is unreachable from, and
       # cannot reach, the Internet.
@@ -82,9 +99,7 @@ rec {
 
     db = {
       role = "db";
-      nets = [
-        { net = "data"; address = "10.30.0.10"; }
-      ];
+      nets = [ { net = "data"; address = addr.db; } ];
       # No default route: the database tier is fully isolated.
     };
 
@@ -93,27 +108,10 @@ rec {
     # is not deployed to the real server.
     client = {
       role = "client";
-      nets = [
-        { net = "wan"; address = "192.0.2.10"; }
-      ];
+      nets = [ { net = "wan"; address = addr.client; } ];
     };
   };
 
-  # ---------------------------------------------------------------------------
-  # Named addresses and ports.
-  #
-  # The firewall rulesets reference these instead of hard-coding literals, so
-  # the allow-matrix and the topology can never drift apart.
-  # ---------------------------------------------------------------------------
-  addr = {
-    gatewayWan = "192.0.2.1"; # public IP that DNAT is published on
-    www = "10.10.0.10"; # web server, edge side
-    wwwApp = "10.20.0.1"; # web server, app side  (source of redis traffic)
-    cache = "10.20.0.10"; # redis, app side
-    cacheData = "10.30.0.1"; # redis, data side   (source of postgres traffic)
-    db = "10.30.0.10"; # postgres, data side
-    client = "192.0.2.10";
-  };
 
   ports = {
     ssh = 22;
