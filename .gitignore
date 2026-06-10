@@ -39,3 +39,8 @@ report/*.blg
 .idea/
 .DS_Store
 .claude
+
+#Docsy
+/doc/_minted/
+*.pdf
+/doc/raport.tex

@@ -1,0 +1,269 @@
+#+LATEX_CLASS: mwart
+#+LATEX_HEADER: \usepackage{tikz}
+#+LATEX_HEADER: \usetikzlibrary{positioning,arrows.meta,shapes.geometric}
+
+#+LANGUAGE: pl
+#+LATEX_HEADER: \usepackage{polski}
+#+TITLE: Zarządzanie maszynami wirtualnymi i sieciami je łączącymi na systemie NixOS z wykorzystaniem języka Nix
+#+SUBTITLE: Raport projekt na Wirtualne Środowiska Obliczeniowe
+
+#+AUTHOR: Filip Kobierski (348591), Andrzej Pultyn (325213)
+#+DATE: Semestr letni 2026
+
+#+KEYWORDS: Nix, NixOS, VM
+#+DESCRIPTION: Sprawozdanie z projektu
+
+#+OPTIONS: toc:t
+#+LATEX: \newpage
+
+* Scenariusz i zakres
+Zgodnie z tematem projektu zakres obejmuje /zarządzanie sieciami dla
+maszyn wirtualnych/: tworzenie i usuwanie sieci oraz VM, filtrację ruchu,
+NAT i konfigurację zapory. Scenariusz z koncepcji to działająca usługa
+złożona z trzech serwerów:
+1. WWW (publiczny punkt wejścia),
+2. Redis,
+3. bazy danych.
+
+Maszyny tworzą *daisy chain*: =gateway= $\rightarrow$ =www= $\rightarrow$
+=cache= $\rightarrow$ =db=. Struktura ta może w przyszłości ewoluować do
+drzewa (np. przez dodanie osobnej, ściślej izolowanej bazy z danymi
+krytycznymi) bez zmiany założeń projektu -- wystarczy rozszerzyć model
+topologii. 
+* Użyte narzędzia
+- Linux + KVM -- wirtualizacja 
+- libvirt/QEMU -- definiowanie sieci i domen
+- NixOS -- deklaratywny system operacyjny gości i gospodarza
+- =nftables= -- filtracja ruchu i NAT
+- =nginx=, Redis, PostgreSQL... -- usługi poszczególnych warstw
+
+Serwerem na którym przeprowadzane były eksperymenty jest prywatny
+serwer NixOS z CPU AMD Ryzen 5 pro 5650G i z 32GB RAMu.
+* Architektura
+** Topologia "daisy chain"
+Kluczową decyzją projektową jest umieszczenie *każdego* połączenia między
+warstwami w osobnym segmencie warstwy 2 (rys. \ref{fig:topo}). Dzięki temu nie
+istnieje wspólna domena rozgłoszeniowa -- warstwa może komunikować się z inną
+tylko wtedy, gdy jest fizycznie podłączona do tego samego segmentu *oraz*
+zapora po drugiej stronie na to zezwala.
+
+#+begin_export latex
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[
+  node distance=10mm and 11mm,
+  vm/.style={draw,rounded corners,minimum width=18mm,minimum height=12mm,align=center,fill=blue!5},
+  cl/.style={draw,rounded corners,minimum width=16mm,minimum height=12mm,align=center,fill=gray!10},
+  net/.style={midway,above,font=\scriptsize\ttfamily},
+  every edge/.style={draw,thick,-{Latex[length=2mm]}}
+]
+  \node[cl] (client) {client\\\scriptsize 192.0.2.10};
+  \node[vm,right=of client] (gw) {gateway\\\scriptsize NAT/FW};
+  \node[vm,right=of gw] (www) {www\\\scriptsize nginx};
+  \node[vm,right=of www] (cache) {cache\\\scriptsize redis};
+  \node[vm,right=of cache] (db) {db\\\scriptsize pgsql};
+
+  \draw[<->] (client) -- (gw) node[net]{wan};
+  \draw[<->] (gw) -- (www) node[net]{edge};
+  \draw[<->] (www) -- (cache) node[net]{app};
+  \draw[<->] (cache) -- (db) node[net]{data};
+
+  \node[font=\scriptsize,below=2mm of gw] {DNAT 80/443};
+  \node[font=\scriptsize,below=2mm of www] {:80,:443};
+  \node[font=\scriptsize,below=2mm of cache] {:6379};
+  \node[font=\scriptsize,below=2mm of db] {:5432};
+\end{tikzpicture}
+\caption{Łańcuch maszyn i segmenty sieci je łączące. Klient reprezentuje
+dowolny host w Internecie (tylko w teście).}
+\label{fig:topo}
+\end{figure}
+#+end_export
+** Adresacja i macierz dostępu
+Ze względu na politykę /default-deny/ każdy ruch niezdefiniowany w
+poniższych tabelach jest odrzucany. Tabela [[addr]] przedstawia segmenty
+sieci i adresację podczas gdy tabela [[dozw]] zawiera macierz dozwolonego ruchu.
+
+#+CAPTION: Segmenty sieci i adresacja
+#+LABEL: addr
+| segment | CIDR         | VLAN | uczestnicy                    |
+|---------+--------------+------+-------------------------------|
+| =wan=     | =192.0.2.0/24= |    9 | gateway =.1=, client =.10= (test) |
+| =edge=    | =10.10.0.0/24= |    1 | gateway =.1=, www =.10=           |
+| =app=     | =10.20.0.0/24= |    2 | www =.1=, cache =.10=             |
+| =data=    | =10.30.0.0/24= |    3 | cache =.1=}, db =.10=             |
+
+#+CAPTION: Macierz dozwolonego ruchu
+#+LABEL: dozw
+| źródło        | cel             |    port | uzasadnienie         |
+|---------------+-----------------+---------+----------------------|
+| Internet      | gateway (publ.) | 80, 443 | DNAT do =www=          |
+| =www=           | cache           |    6379 | dostęp do Redis      |
+| =cache=       | db              |    5432 | dostęp do PostgreSQL |
+| zakres admin. | każdy host      |      22 | zarządzanie (SSH)    |
+
+* Implementacja
+** Model topologii
+*** Jedyne źródło prawdy
+Plik =lib/topology.nix= jest jedynym miejscem gdzie określone są
+konfiguracje sieci hostów i reguły firewalla. Korzysta z nich test
+integracyjny, więc można mieć pewność, że przetestowana architektura
+będzie identyczna do tej wprowadzanej do środowiska produkcyjnego
+*** Autodokumentacja
+Język Nix jest na tyle czytelny, że struktury danych, nawet bez
+komentarzy, stanowią dobrą dokumentację. Co ważniejsze dokumentacja ta
+_zawsze jest aktualna_. Wycinki konfiguracji zostały przedstawione na
+rysunkach [[top_net]] i [[top_host]].
+
+#+CAPTION: Fragment konfiguracji topologii: vlany
+#+LABEL: top_net
+#+begin_src nix
+networks = {
+  wan  = { vlan = 9; ip = "192.0.2.0"; prefix = 24; };
+  edge = { vlan = 1; ip = "10.10.0.0"; prefix = 24; };
+  app  = { vlan = 2; ip = "10.20.0.0"; prefix = 24; };
+  data = { vlan = 3; ip = "10.30.0.0"; prefix = 24; };
+} 
+#+end_src
+
+#+CAPTION: Fragment konfiguracji topologii: określenie adresacji hosta =gateway=
+#+LABEL: top_host
+#+begin_src nix
+hosts = {
+  gateway = {
+    role = "gateway";
+    nets = [
+      { net = "wan"; address = addr.gatewayWan; }
+      { net = "edge"; address = addr.gateway; }
+    ];
+  };
+...
+#+end_src
+** Filtracja ruchu i NAT (=nftables=)
+=lib/firewall.nix= jest łatwo audytowalną i kompleksową konfiguracją
+reguł =nftables= dla każdego z hostów, która stosuje się to zalecenia
+/Don't Repeat Yourself/ programatyczną ich konstrukcją.
+
+#+CAPTION: Wygenerowane reguły =nftables= dla warstwy =db=
+#+begin_src unixconfig
+table inet filter {
+  chain input {
+    type filter hook input priority 0; policy drop;
+    iif "lo" accept
+    ct state established,related accept
+    ct state invalid drop
+    ip protocol icmp icmp type echo-request limit rate 5/second accept
+    ip saddr 10.0.0.0/8 tcp dport 22 accept
+    ip saddr 10.30.0.1 tcp dport 5432 accept   # tylko z cache
+  }
+  chain forward { type filter hook forward priority 0; policy drop; }
+  chain output {
+    type filter hook output priority 0; policy drop;   # brak egressu
+    oif "lo" accept
+    ct state established,related accept
+  }
+}
+#+end_src
+
+Ponadto na =gateway= dodatkowo działa tablica NAT: DNAT
+publikuje serwis WWW na adresie publicznym, a =masquerade= umożliwia wybranym
+hostom wewnętrznym (warstwie WWW) wyjście do Internetu. Tylko brama ma włączone
+przekazywanie pakietów (=ip_forward=); pozostałe maszyny są punktami
+końcowymi, nie routerami. Warstwy cache i db nie mają trasy domyślnej, więc nie
+są w stanie połączyć się z Internetem.
+#+LATEX: \pagebreak
+** Imperatywny interfejs testowy
+Skrypt =vmctl.sh= jest imperatywnym dopełnieniem naszego narzędzia
+pozwalającym na testowe rozszerzanie podstawowej konfiguracji.
+Maszyny wirtualne budowane są z pomocą narzędzi zapewnionych prze
+NixOS a =vmctl= tworzy i usuwa sieci i domeny =libvirt= w których one
+działają.
+Segmenty wewnętrzne to sieci izolowane a segment =wan= to sieć NAT
+zapewniająca bramie dostęp do internetu.
+
+Ponieważ jest to skrypt =bash=, nie czyta on bezpośrednio plików
+nix. Wszystkie jej zmiany muszą być migrowane ręcznie. Z tego powodu
+jest to narzędzie dobre do eksperymentów, które później mogą zostać
+wcielone do plików nix.
+
+* Testy
+Test integracyjny uruchamia cały łańcuch w QEMU (z tych samych
+modułów, co wdrożenie produkcyjne) i przeprowadza następujące testy:
+1. Widoczność ICMP:
+   - warstwy sąsiednie (np. =cache= i =db=) mają łączność,
+   - =client= nie pinguje żadnego hosta wewnętrznego,
+   - =db= nie inicjuje ruchu (brak egressu).
+2. Skan nmap: z zewnątrz widoczne są wyłącznie porty 80 i 443 na adresie publicznym bramy.
+3. Osiągalność: serwis odpowiada przez adres publiczny (DNAT):
+   - dozwolone są =www→cache:6379= i =cache→db:5432=,
+   - zablokowane są =www→db:5432=, =client→cache:6379=, =client→db:5432=.
+Do uruchomienia testów nie jest potrzebna żadna konfiguracja.
+* Analiza bezpieczeńśtwa
+** Zastosowane zasady bezpieczeńśtwa
+- *Segmentacja i least privilege*: Jeden segment L2 na połączenie,
+  polityka *default-deny*, usługi udostępniane wyłącznie temu sąsiadowi,
+  który ich potrzebuje --- z dopasowaniem po *adresie źródłowym*, nie tylko
+  porcie. Atakujący, który przejmie warstwę WWW, nie ma drogi sieciowej do bazy
+  z pominięciem warstwy cache.
+- *Obrona w głąb (/defense in depth/)*: Filtracja sieciowa *oraz*
+  zabezpieczenia na poziomie usług: Redis nasłuchuje tylko na interfejsie od
+  strony =app= i wymaga hasła; PostgreSQL nasłuchuje tylko na interfejsie
+  od strony =data=, a =pg_hba= ogranicza klientów i wymusza =scram-sha-256=.
+- *Minimalizacja powierzchni ataku*: Brama wystawiona do Internetu nie
+  uruchamia żadnej usługi aplikacyjnej. Baza danych nie ma egressu ani trasy
+  domyślnej, co minimalizuje skutki ewentualnego przejęcia (brak "call home",
+  utrudniona eksfiltracja). Wyłączono dokumentację i zbędne pakiety.
+- *Reprodukowalność jako bezpieczeństwo*: Cała konfiguracja jest
+  deklaratywna i wersjonowana, co eliminuje dryf konfiguracji i pozwala
+  audytować dopuszczony ruch z jednego modelu. Atomowe aktualizacje i rollback
+  NixOS ograniczają ryzyko nieudanych zmian.
+- *Urwardzenia* SSH wyłącznie po kluczu (bez haseł, bez logowania
+  root), a zapora dodatkowo ogranicza zakres adresów źródłowych mogących w ogóle
+  dosięgnąć portu 22.
+
+** Niewłaściwe sposoby użycia (czego unikać)
+- *Wystawienie Redis/PostgreSQL na adresie "wildcard"*: Redis domyślnie
+  nie ma uwierzytelniania, a jego =protected-mode= łatwo obejść po
+  powiązaniu z adresem routowalnym. Dlatego stosujemy powiązanie z jednym
+  interfejsem wraz z  hasłem i zaporę.
+- *Traktowanie NAT jak zapory.*: NAT ukrywa topologię, ale nie filtruje
+  ruchu w obrębie sieci wewnętrznej. Bezpieczeństwo zapewnia tu =nftables=, nie
+  sam NAT.
+- *Zbyt szeroki zakres SSH*: Rozszerzenie =adminCidr= do
+  =0.0.0.0/0= wystawia panel zarządzania na cały Internet.
+- *Sekrety w repozytorium*: Demonstracyjne =requirePass= oraz
+  poświadczenia bazy są wyłącznie zaślepkami; w produkcji należy dostarczyć je
+  poza repozytorium (np. =requirePassFile=, agenix/sops).
+- *Spłaszczenie segmentacji*: Połączenie wszystkich warstw w jedną sieć
+  "dla wygody" niweczy najważniejszą właściwość bezpieczeństwa -- baza
+  staje się osiągalna bezpośrednio z warstwy WWW.
+- *Nadmierny egress*: Pozostawienie warstwie WWW nieograniczonego wyjścia
+  do Internetu (tu: dopuszczone na potrzeby aktualizacji) zwiększa ryzyko
+  eksfiltracji; w środowisku produkcyjnym warto ograniczyć je do konkretnych
+  celów lub serwera lustrzanego.
+- *Korzystanie z =vmctl= do zarządzania stałą konfiguracją*: największą
+  zaletą NixOS jest deklaratywność. =vmctl= wprowadza stan, czyli dryf
+  konfiguracji. Po udanym testowym deploymencie z wykorzystaniem tego
+  narzędzia konfiguracje zarówno =.nix= jak i samego =vmctl= powinny być
+  uaktualnione.
+
+
+* Ryzyko i ograniczenia
+Zgodnie z koncepcją głównym ryzykiem była praca z niszowym oprogramowaniem
+(ograniczona dokumentacja, mała społeczność). W praktyce najwięcej uwagi
+wymagało spójne mapowanie nazw interfejsów: sterownik testów NixOS numeruje
+interfejsy pozycyjnie od =eth1=, podczas gdy realne maszyny libvirt
+(z parametrem ~net.ifnames=0~) numerują od =eth0=}. Rozwiązano to
+parametrem =baseIndex= w =mkHost= oraz dopasowywaniem reguł zapory
+po adresach, a nie nazwach interfejsów. Certyfikat TLS warstwy WWW jest
+samopodpisany (demonstracyjnie); w produkcji należy użyć ACME lub certyfikatu
+dostarczonego.
+* Wnioski
+Zrealizowaliśmy kompletny, deklaratywny zestaw narzędzi do zarządzania
+maszynami wirtualnymi i sieciami je łączącymi: tworzenie i usuwanie
+sieci oraz VM, filtrację ruchu, NAT i konfigurację zapory dla każdej
+maszyny. Podejście oparte na języku Nix dało jedno źródło prawdy, z
+którego wyprowadzane są zarówno wdrożenie, jak i automatyczny test
+potwierdzający właściwości bezpieczeństwa. Architektura *daisy chain*
+z odrębnymi segmentami, polityką *default-deny* i obroną w
+głąb realizuje zasadę najmniejszych uprawnień i jest gotowa do rozwoju
+w strukturę drzewiastą.
